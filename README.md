@@ -1,6 +1,4 @@
-# Generating Synthetic Cardiotocography (CTG) Data
-
-A diffusion-based generative model to synthetise CTG data.
+# A diffusion-based Cardiotocography Data Generator
 
 ## What is CTG?
 
