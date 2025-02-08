@@ -1,0 +1,17 @@
+train_cfg: configs/vqvae-czech.yaml
+syn_dir: output/vqvae-czech-test/
+syn_data_file: generated_samples.h5
+syn_class_file: generated_labels.csv
+accelerator: "gpu"
+devices: 
+- 0
+random_seed: 42
+validation_size: 0.2
+classifier_dir : results/evaluation/czech
+classifier_name: czech_fcn
+save_interval: 5
+sample_num: 10000
+batch_size: 16
+lr: 0.0003
+epochs: 20
+
