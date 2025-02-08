@@ -1,4 +1,4 @@
-# A Diffusion-based Cardiotocography Data Generator
+# Cardiotocography Data Generation with Diffusion Models
 
 ## What is CTG?
 
