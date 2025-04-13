@@ -1,5 +1,5 @@
 training_data: training_data/czech_proc.h5
-out_dir: results/sampling-czech/
+out_dir: results/sampling-diffusion-sr_vqvae-czech/
 device: cuda
 in_channels: 2
 input_size: 2048

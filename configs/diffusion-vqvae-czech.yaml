@@ -1,5 +1,5 @@
 training_data: training_data/czech_proc.h5
-out_dir: results/vqvae-czech/
+out_dir: results/diffusion-vqvae-czech/
 device: cuda
 in_channels: 2
 input_size: 2048
@@ -58,7 +58,11 @@ ldm:
     - 16
     epoch: 20
     out_dir: ldm-training/
-    lr: 0.0003
+    lr: 
+      init: 0.0005
+      factor: 0.5
+      patience: 5
+      min: 0.00001
     schedule_opt:
       schedule: cosine
       n_timestep: 1000
