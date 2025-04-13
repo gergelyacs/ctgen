@@ -1,5 +1,7 @@
 # Cardiotocography Data Generation with Diffusion Models
 
+While this framework is designed as a diffusion-based CTG (Cardiotocography) data generator, it is general-purpose and can be applied to any type of time series data. 
+
 ## What is CTG?
 
 CTG (Cardiotocography) is a medical monitoring technique used during pregnancy and childbirth to assess fetal well-being and uterine activity. It records two time series:
@@ -35,24 +37,34 @@ Conditional generation is supported by classifier-free guidance. Each sample can
 </p>
 
 ## Generation Methods
+The framework supports a variety of generation strategies — from traditional denoising diffusion in the time domain to more advanced latent-based generation with super-resolution.
+Each generation method is defined by combining three core components in the configuration file, making the framework modular and extensible:
+1. **Compression Technique** (`first_stage_model` section): This component defines how the time series is encoded into a latent space. 
+2.	**Denoising Diffusion** (`ldm` section): This is the generative model that operates in the output space of the compression model. By working in the latent domain, it allows efficient and scalable generation, even for high-resolution time series.
+3.	**Super-Resolution** (`sr_model` section):
+Super-resolution is applied after generation to refine or upscale the output. It has its own compression model (`first_stage_model` subsection).
 
-1.	**Latent Diffusion with a Vector Quantized Variational Autoencoder (VQ-VAE)**: Similarly to [Stable Diffusion](https://arxiv.org/pdf/2112.10752), this approach generates data directly in the latent space of VAE, making the process faster than synthesizing CTGs directly in the time domain. CTGs show high local spatial correlation, which makes them highly compressible. 
+Here are a few instantiations:
 
-<p align="center">
-  <img style="display: block; margin: auto;" src="images/sample_vqvae.png" alt="">
-  <i>Generated with Latent Diffusion</i>
-</p>
+### Diffusion in Time Domain
+[Standard denoising diffusion in the time domain](https://arxiv.org/abs/2006.11239) can be enabled by setting the `first_stage_model` to `identity`. This means the input time series is not compressed and the diffusion model operates directly on the raw time-domain data.
 
-2.	**Diffusion with Super-Resolution**: This method first generates a low-resolution (under-sampled) version of the CTG using [standard denoising diffusion in the time domain](https://arxiv.org/abs/2006.11239), and then applies a [latent-based super-resolution technique](https://arxiv.org/pdf/2112.10752) to upscale it. The latent-based super-resolution works by first creating a latent representation of the high-resolution CTG through [conditional diffusion](https://arxiv.org/pdf/2104.07636), where the condition is the interpolated version of the low-resolution CTG. This generated latent representation is then decoded into its high-resolution form. 
+This approach is simple and effective for generating shorter time series or those with lower sampling frequency. However, since it does not leverage latent representations, it may become less scalable for longer or high-resolution sequences.
 
-<p align="center">
-  <img style="display: block; margin: auto;" src="images/sample_sampling.png" alt="">
-  <i>Generated with Super-Resolution</i>
-</p>
+See ``configs/diffusion-identity.yaml`` for an example.
 
-### Method 1: Latent Diffusion
-A first stage model such as [VQVAE](https://arxiv.org/abs/1711.00937) or [VQGAN](https://arxiv.org/pdf/2012.09841) is trained to encode the time-series data into a more compact latent representation. A diffusion model is then trained on the latent space created by the first-stage model to generate synthetic latent representation. Finally, this synthetic latent representation is transformed by the decoder of the first stage model into the time domain.
-Since the latent representation is a compressed version of the original data, its generation becomes significantly faster.
+### Diffusion in Undersampled Time Domain
+You can enable denoising diffusion in an undersampled time domain by setting the `first_stage_model` to `sampling` and specifying a `sampling_rate`. For example, a `sampling_rate` of 8 means every 8th sample is retained from the input sequence, effectively downsampling the data. The diffusion model then operates on this lower-resolution signal. After generation, the time series is upscaled back to the original resolution using simple linear interpolation.
+
+This is the fastest and simplest method to make diffusion scalable for long time series. It does not require training a first-stage model, making it lightweight and efficient. However, its effectiveness depends on the assumption that the time series is redundant, such that downsampling introduces minimal distortion. 
+
+See ``sampling-diffusion`` for an example.
+
+### Compression with Learned Representations
+
+CTGs show high local spatial correlation, which makes them highly compressible.
+Time series data can be effectively compressed using data-dependent models such as VAE (Variational Autoencoder), VQ-VAE (Vector Quantized VAE), or VQ-GAN (Vector Quantized GAN). These approaches learn to represent the data in a compact latent space which allows higher compression ratios, more accurate reconstructions compared to naive downsampling, and richer feature representations via the encoder, which can be useful for downstream tasks.
+While these models are capable of generating time series directly from latent codes, this functionality is not currently supported by this framework.
 
 <img src="images/VQVAE.png" alt="VQVAE"/>
 
@@ -62,9 +74,47 @@ Since the latent representation is a compressed version of the original data, it
 
 The decoder architecture is the inverse of the encoder architecture.
 
-#### Configuration
+See ``{vqvae,vae}-only.yaml`` for an example.
 
-##### Time-Series Parameters:
+### Latent Diffusion 
+
+Similarly to [Stable Diffusion](https://arxiv.org/pdf/2112.10752), this approach generates data directly in the latent space of the first stage model, making the process faster than synthesizing CTGs directly in the time domain. 
+
+<p align="center">
+  <img style="display: block; margin: auto;" src="images/sample_vqvae.png" alt="">
+  <i>Generated with Latent Diffusion</i>
+</p>
+
+A first stage model such as [VQVAE](https://arxiv.org/abs/1711.00937) or [VQGAN](https://arxiv.org/pdf/2012.09841) is trained to encode the time-series data into a more compact latent representation. A diffusion model is then trained on the latent space created by the first-stage model to generate synthetic latent representation. Finally, this synthetic latent representation is transformed by the decoder of the first stage model into the time domain.
+Since the latent representation is a compressed version of the original data, its generation becomes significantly faster.
+
+See ``diffusion-vqvae.yaml`` for an example with VQ-VAE as the first stage model.
+
+### Diffusion on Undersampled Data + Latent-based Super-resolution
+
+This is a two-stage generation pipeline:
+
+1. **Low-Resolution Generation:** First, a standard denoising diffusion model operates directly in the time domain to generate a low-resolution (undersampled) version of the target time series. This step captures the global trends and structure of the signal while intentionally ignoring finer, noisier details.
+
+2. **Latent-Based Super-Resolution:** Next, a latent diffusion model upsamples the low-resolution output into a high-resolution version using a learned latent space, inspired by [VQ-VAE-2](https://arxiv.org/pdf/1906.00446) and a [latent-based super-resolution technique](https://arxiv.org/pdf/2112.10752). This process works as follows:
+A latent representation of the high-resolution signal, denoted as $z_{hr}$, is generated using conditional diffusion, where the condition is the latent code $z_{lr}$ corresponding to the interpolated low-resolution signal produced in the first stage.
+Specifically, $z_{hr}$ is sampled by a diffusion model that takes as input the concatenation of $z_{lr}$ and Gaussian noise along the channel dimension. This conditioning setup guides the model to generate fine-grained details consistent with the global structure captured in the low-resolution signal.
+Finally, the high-resolution latent $z_{hr}$ is decoded using a VQ-VAE decoder to reconstruct the full-resolution time series.
+
+This approach balances scalability and fidelity by generating coarse structures first, then refining them with fine-grained detail in a second, latent-driven step. Hence, it requires two low-resolution generations (one for $z_{lr}$ and another for $z_{hr}$).
+
+See ``sampling-diffusion-sr_vqvae.yaml`` for an example. `sr_model` specifies super resolution with its own `first_stage_model`. Although `first_stage_model` can be set to identity for traditional super resolution, it can be signficantly slower for high-resolution time series.
+
+
+<p align="center">
+  <img style="display: block; margin: auto;" src="images/sample_sampling.png" alt="">
+  <i>Generated with Super-Resolution</i>
+</p>
+
+### Configuration
+
+
+#### General settings:
 - **`in_channels`**: Number of time-series inputs (e.g., `2` for CTG).  
 - **`freq`**: Sampling frequency of the original data.  
 - **`input_size`**: Length of the original time-series.  
@@ -72,29 +122,24 @@ The decoder architecture is the inverse of the encoder architecture.
 - **`out_dir`**: the output directory of the training process containing the trained models and visualized samples.
 - **`class_file`**: Specifies the classes for each training sample in CSV format. The first column is the patient ID also present in the pytables file for each training sample.
 If `class_file` is omitted, unconditional generation is used.  
-- **`classes`**: Lists the specific classes used for generation.  
+- **`classes`**: Lists the specific classes used for generation. 
+ 
 
-##### First-Stage Model (VQVAE):
-The `first_stage_model` section defines the VQVAE configuration, including:  
+
+#### First-stage model:
+The `first_stage_model` section can define `identity` (no compression), `vqvae` (VQ-VAE), `vae` (VAE), `vqgan` (VQ-GAN).
+
+For `vqvae`, `vae`, `vqgan`:
 - **Latent Dimensions**: Typically small (2–4).  
 - **Layers**: Limited (2–3) but with a higher number of convolutional filters to retain local variations. The numbers given in `channel_mults` are the channel multipliers (this number of times 32 is the actual channel number). For example, if`channel_mults` is 2,4,8, then we have three layers with 64, 128, 256 channels per layer (last one is the output layer).
 
 - **Reconstruction Loss**: Uses an adjusted version of ["focal" frequency loss](https://github.com/EndlessSora/focal-frequency-loss), with normalization applied separately for each channel to handle different scales and semantics.  This loss helps preserve high-frequency components unlike more standard $L_p$ losses.
 
-##### Latent Diffusion Model (LDM):
-The `ldm` section specifies the Latent Diffusion model configuration including the denoiser's U-NET architecture (`channel_mults`), and the beta scheduling method (linear or cosine) in `schedule_opt` with the number of diffusion steps (`n_timestep`).
+#### LDM:
+The `ldm` section specifies the Latent Diffusion model configuration including the denoiser's U-NET architecture (`channel_mults`), and the beta scheduling method (linear or cosine) in `schedule_opt` with the number of diffusion steps (`n_timestep`). The learning rate scheduler is `ReduceLROnPlateau` which reduced learning rate by a factor when training loss as stopped improving.
 
-### Method 2: Diffusion with Super-Resolution
-The process has two stages. First, a diffusion model generates a low-resolution version of the synthetic sample. Then, latent diffusion upscales it to high resolution.
-
-To train the low-resolution diffusion model, the training data is undersampled, for example, by a factor of 8. A standard diffusion model generates this lower-resolution data in the time domain, capturing the global trends of the time series while disregarding finer, noisier details. These finer details are handled separately by a conditional latent diffusion model, which upscales the undersampled data similarly to [VQ-VAE-2](https://arxiv.org/pdf/1906.00446). It generates a high-resolution latent representation by conditioning on the low-resolution latent $z_{lr}$, achieved by concatenating noise with $z_{lr}$ along the channel dimension (after interpolation). The generated latent code is then decoded into high resolution using VQVAE.
-
-This method provides a mid-solution between Method 1 (Latent Diffusion) and training a single high-resolution diffusion model entirely in the time domain. Even if the latent representation lacks full fidelity, the low-resolution diffusion model still preserves the main trends while offering greater scalability than a single high-resolution model trained end-to-end. Indeed, the complete diffusion process happens at a lower resolution, 
-with upscaling performed just once, at the very end, through the decoder. 
-
-#### Configuration
-
-Time-series characteristics and classes are defined the same way as in Method 1. The `first_stage_model` section in the root configuration sets the sampling rate. The super-resolution model, defined under `sr_model`, has its own first-stage model where diffusion is conditioned on the low-resolution time series, followed by the final upscaling into the high-resolution regime.
+#### Super-resolution:
+Same as for LDM except that it has its own first stage model section which can be `vqvae`, `vae` for latent-based super-resolution or `identity` for super-resolution in time domain.
 
 ## Training
 
@@ -115,7 +160,7 @@ For conditional generation, each training sample’s labels are stored in a sing
 ### Run training
 Provide the configuration file in command line which contains all training parameters:
 ```
-accelerate launch train.py --config=configs/sampling.yaml
+accelerate launch train.py --config=configs/diffusion-identity-czech.yaml
 ```
 At the end of every epoch, the models are saved and the a few generated samples are saved for visualization in the output directory specified in the config file. 
 `configs/vqvae-czech.yaml` is an example for Method 1 (see above), while `configs/sampling-czech.yaml` is for Method 2.
@@ -123,7 +168,7 @@ At the end of every epoch, the models are saved and the a few generated samples 
 ## Generation
 Generate 100 samples into a h5 file using ddim sampler with 100 steps:
 ```
-python generate_samples.py --config=configs/vqvae_czech.py --out_dir=output/vqvae-czech --samples=100 --steps=100 --sampler=ddim --cond_scale=1 --out_h5=generated_samples.h5
+python generate.py --config=configs/diffusion-identity-czech.yaml --out_dir=output/diffusion-identity-czech --samples=100 --steps=400 --sampler=ddim --guidance_scale=8 --out_h5=generated_samples.h5
 ```
 Generation is done with classifier-free guidance, with all necessary information (such as model paths) retrieved from the configuration file. 
 If `--samples` is set to a csv file name, then all columns except the last define the label (subclass items) and the last `count` column specifies the number of samples to generate for that label.
@@ -135,7 +180,7 @@ A variety of samplers are supported, including the default DDPM (with fixed time
 ## Evaluation
 Evaluation is performed using Fréchet Inception Distance (FID) and Inception Score (IS), both of which require a trained classifier to extract features from time-series data. A fully convolutional network (FCN) from [this repository](https://github.com/okrasolar/pytorch-timeseries) is used for this purpose. A separate classifier is trained for each subclass, and the average performance metrics—FID, IS, and test accuracy—are reported.
 
-Configure evaluation in `configs/eval.yaml` that specifies:
+Configure evaluation in `configs/czech-eval.yaml` that specifies:
 - The path to the generative model and the original samples
 - The path to the PyTables file containing generated samples
 - The path to the trained classifiers
@@ -143,11 +188,11 @@ Configure evaluation in `configs/eval.yaml` that specifies:
 Steps to Run Evaluation:
 1. Train the feature extractors:
 ``` 
-python -m evaluation.train_fcn --config=configs/eval.yaml
+python -m evaluation.train_fcn --config=configs/czech-eval.yaml
 ```
 2. Compute the average FID and IS scores, along with classifier accuracy:
 ```
-python eval.py --config=configs/eval.yaml
+python eval.py --config=configs/czech-eval.yaml
 ```
 
 ## Privacy issues 

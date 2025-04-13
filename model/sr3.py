@@ -73,6 +73,12 @@ class SR3():
         logger.info(f"Number of SR3 parameters: {params:,}")
         self.agg_metrics = []
 
+        self.optimizer = torch.optim.AdamW(self.diffusion.parameters(), lr=kwargs['lr'].init)
+        self.lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', 
+                                                                       factor=kwargs['lr'].factor, 
+                                                                       patience=kwargs['lr'].patience, 
+                                                                       min_lr=kwargs['lr'].min)
+
         self.max_grad_norm = max_grad_norm
         self.ema_decay = ema_decay
         self.ema_update_every = ema_update_every
@@ -104,7 +110,7 @@ class SR3():
         """ Initialize optimizer for training. """
         logger.info ("Training on device: %s", self.device)
 
-        self.optimizer = torch.optim.Adam(self.diffusion.parameters(), lr=train_cfg.lr)
+        #self.optimizer = torch.optim.Adam(self.diffusion.parameters(), lr=train_cfg.lr)
      
         self.diffusion, self.optimizer, train_loader, val_loader = self.accelerator.prepare(self.diffusion, self.optimizer, train_loader, val_loader)
         
@@ -112,6 +118,7 @@ class SR3():
      
         # start training
         for i in range(start_epoch, train_cfg.epoch):
+            logger.info (f"Learning rate: {self.lr_scheduler.get_last_lr()[0]:.6f}")
             train_metrics = self.train_step(train_loader, i)   
             self.agg_metrics.append(train_metrics.get_avg("train_"))
             logger.info (f"Epoch: {i+1} / {train_cfg.epoch}; Training metrics: {train_metrics.get_avg()}")
@@ -143,6 +150,9 @@ class SR3():
                 
                 if self.accelerator.is_main_process:
                     self.ema.ema_model.train()
+
+            # FIXME: validation loss
+            self.lr_scheduler.step(train_metrics['train_loss'][-1])
             self.accelerator.wait_for_everyone()
 
     def train_step(self, train_loader, curr_epoch):
@@ -268,6 +278,8 @@ class SR3():
                       'scale_factor' : self.scale_factor,
                       'metrics': self.agg_metrics,
                       'ema': self.ema.state_dict(),
+                      'lr': self.lr_scheduler.state_dict(),
+                      'optimizer' : self.accelerator.get_state_dict(self.optimizer),
                       'model_state_dict' : self.accelerator.get_state_dict(self.diffusion)}
         
         for key, param in state_dict.items():
@@ -288,6 +300,10 @@ class SR3():
             self.ema.load_state_dict(data['ema'])
   
         self.agg_metrics = data['metrics']
+        self.optimizer = self.accelerator.unwrap_model(self.optimizer)
+        self.optimizer.load_state_dict(data['optimizer'])
+        self.lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer)
+        self.lr_scheduler.load_state_dict(data['lr'])
         self.diffusion.eval()
         logger.info(f"SR3 model loaded successfully from epoch {data['epoch']}.")
         return data['epoch']

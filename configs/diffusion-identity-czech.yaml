@@ -1,0 +1,47 @@
+#training_data: training_data/diabetes_samples.h5
+training_data: training_data/czech_proc.h5
+out_dir: results/diffusion-czech/
+device: cuda
+in_channels: 2
+input_size: 2048
+freq: 1 #Hz
+validation_size: 10
+scale_factors:
+  fhr_max: 240.0
+  fhr_min: 60.0
+  uc_max: 100.0
+  uc_min: 0.0
+first_stage_model:
+  #type: sampling
+  #sampling_rate: 2
+  type: identity
+ldm:
+  model_path: ldm.pt
+  #unconstrained: True
+  training:
+    max_grad_norm: 1.0
+    ema_decay: 0.995
+    ema_update_every: 4
+    batch_size: 16
+    loss_type: l1
+    inner_channel: 32
+    save_interval: 20
+    norm_groups: 8
+    channel_mults:
+    - 2
+    - 4
+    - 8
+    - 16
+    epoch: 350
+    out_dir: ldm-training/
+    #lr: 0.00003
+    lr: 
+      init: 0.0005
+      factor: 0.5
+      patience: 5
+      min: 0.00001
+    schedule_opt:
+      schedule: cosine
+      n_timestep: 1000
+
+ 

@@ -7,7 +7,7 @@ from sklearn.model_selection import train_test_split
 from utils import create_dir, plot_syn_data, unscale, save_signals
 from torch.utils.data import DataLoader
 from model import LDM, SR3
-from model.first_stage import VAE, VQGAN, Sampling#, CS
+from model.first_stage import VAE, VQGAN, Sampling, Identity#, CS
 from omegaconf import OmegaConf
 from dataloader.loader import PyTablesDataset
 import torch
@@ -69,7 +69,7 @@ def load_first_stage(encoder_cfg, out_dir, input_size, in_channels, accelerator=
     if encoder_cfg.type == 'vae':
         # load VAE
         logger.info (f"==> Loading VAE model from {encoder_cfg.model_path}...") 
-        first_stage_model = VAE(cfg=encoder_cfg, input_size=input_size)
+        first_stage_model = VAE(cfg=encoder_cfg, input_size=input_size, accelerator=accelerator)
         in_channel = encoder_cfg.latent_dim
         first_stage_model.load(f"{out_dir}/{encoder_cfg.model_path}")      
 
@@ -81,14 +81,21 @@ def load_first_stage(encoder_cfg, out_dir, input_size, in_channels, accelerator=
         first_stage_model.load(f"{out_dir}/{encoder_cfg.model_path}")      
 
     elif encoder_cfg.type == 'sampling':
+        # Diffusion in undersampled time domain
         logger.info (f"==> Using Downsampling with rate {encoder_cfg.sampling_rate}")
         first_stage_model = Sampling(sampling_rate=encoder_cfg.sampling_rate, input_size=input_size)
         in_channel = in_channels
 
-    elif encoder_cfg.type == 'cs':
-        logger.info (f"==> Using Compressed Sensing model")
-        first_stage_model = CS(cfg=encoder_cfg, input_size=input_size)
+    elif encoder_cfg.type == 'identity':
+        # Diffusion in time domain
+        logger.info (f"==> Using Identity model")
+        first_stage_model = Identity(input_size=input_size)
         in_channel = in_channels
+
+    #elif encoder_cfg.type == 'cs':
+    #    logger.info (f"==> Using Compressed Sensing model")
+    #    first_stage_model = CS(cfg=encoder_cfg, input_size=input_size)
+    #    in_channel = in_channels
     else:
         raise NotImplementedError(type)
     
@@ -132,7 +139,7 @@ def train_first_stage(encoder_cfg, dataset, accelerator=None):
     #testloader = accelerator.prepare(testloader)
 
     if type == 'vae':        
-        model = VAE(cfg=encoder_cfg, input_size=input_size)
+        model = VAE(cfg=encoder_cfg, input_size=input_size, accelerator=accelerator)
         model.to(cfg.device)
         
         continue_training(f"{out_dir}/{encoder_cfg.model_path}", model, encoder_cfg.training, trainloader, testloader, first_stage_hook)
@@ -142,25 +149,30 @@ def train_first_stage(encoder_cfg, dataset, accelerator=None):
         model.to(cfg.device)
         
         continue_training(f"{out_dir}/{encoder_cfg.model_path}", model, encoder_cfg.training, trainloader, testloader, first_stage_hook)
+    elif type == 'identity':
+        return
 
-    elif type == 'cs':
-        model = CS(cfg=cfg.first_stage_model, input_size=input_size)
-        model.validate(testloader, 
-                     save_path=f"{out_dir}/{encoder_cfg.model_path}", 
-                     val_hook=first_stage_hook)
-        model.save(f"{out_dir}/{encoder_cfg.model_path}")
+    #elif type == 'cs':
+    #    model = CS(cfg=cfg.first_stage_model, input_size=input_size)
+    #    model.validate(testloader, 
+    #                 save_path=f"{out_dir}/{encoder_cfg.model_path}", 
+    #                 val_hook=first_stage_hook)
+    #    model.save(f"{out_dir}/{encoder_cfg.model_path}")
     else:
         logger.error("Invalid model type. Please choose from vae, vqgan")
         sys.exit(1)
 
-
 def train_ldm(dataset, accelerator=None): 
-    batch_size = cfg.ldm.training.batch_size    
-    class_nums = dataset.class_nums
+    batch_size = cfg.ldm.training.batch_size  
+    #if hasattr(cfg.ldm, 'unconstrained') and cfg.ldm.unconstrained:
+    #    class_nums = None 
+    #else:
+    #    class_nums = dataset.class_nums
 
     #train_idx, val_idx = train_test_split(np.arange(len(dataset)), test_size=100)
     #train_idx = train_idx[:1000]
     # create two subsets
+    class_nums = dataset.class_nums
     #dataset = torch.utils.data.Subset(dataset, train_idx)
 
     trainloader = DataLoader(dataset, batch_size=batch_size, pin_memory=True, num_workers=cpu_count(), shuffle=True)
@@ -214,7 +226,10 @@ def main():
         logger.info (f"{cfg.training_data}")
         # since the data is stored in (time, channels) format, we need to transpose it for PyTorch
         # the data is already scaled into [-1, 1]
-        patient_data = PyTablesDataset(cfg.training_data, transpose=True, class_file=cfg.class_file, classes=cfg.classes)
+        if hasattr(cfg, 'class_file') and hasattr(cfg, 'classes'):
+            patient_data = PyTablesDataset(cfg.training_data, transpose=True, class_file=cfg.class_file, classes=cfg.classes)
+        else:
+            patient_data = PyTablesDataset(cfg.training_data, transpose=True)
     else:
         raise NotImplementedError(ext)
     
@@ -241,8 +256,8 @@ def main():
     type = cfg.first_stage_model.type.lower()
 
     # if first stage model exists, load it
-    if type == 'sampling':
-        logger.info ("=== Sampling model does not require first-stage training.")
+    if type in ['sampling', 'identity']:
+        logger.info (f"=== {type} model does not require first-stage training.")
     else:
         logger.info (f"Training first stage {type.upper()} model...")
         create_dir(f"{cfg.out_dir}/{cfg.first_stage_model.training.out_dir}")

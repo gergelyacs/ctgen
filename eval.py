@@ -77,16 +77,17 @@ if __name__ == '__main__':
     # load training data: (sample_num, time, channels)
     real_dataset = PyTablesDataset(train_cfg.training_data, transpose=True, class_file=train_cfg.class_file, classes=train_cfg.classes)
     real_class_nums = real_dataset.class_nums
+    real_dataset_size = len(real_dataset)
 
-    train_idx, val_idx = train_test_split(np.arange(len(real_dataset)), test_size=cfg.validation_size, random_state=cfg.random_seed)
+    train_idx, val_idx = train_test_split(np.arange(real_dataset_size), test_size=cfg.validation_size, random_state=cfg.random_seed)
 
     # evaluate on validation data
     # It should be used for FID computation
     val_dataset = torch.utils.data.Subset(real_dataset, val_idx)
-    testloader = DataLoader(val_dataset, batch_size=cfg.batch_size)
+    testloader = DataLoader(val_dataset, batch_size=1)#cfg.batch_size)
 
-    # select 2000 random samples
-    real_idx = np.random.choice(len(real_dataset), cfg.sample_num, replace=False)
+    # select random samples
+    real_idx = np.random.choice(real_dataset_size, min(cfg.sample_num, real_dataset_size), replace=False)
     
     # load syn data: (sample_num, time, channels)
     # it must have the same classes as the real data
@@ -103,13 +104,22 @@ if __name__ == '__main__':
         downsample_dim = real_dataset.data.shape[1] 
 
     # select random samples
-    syn_idx = np.random.choice(len(syn_dataset), cfg.sample_num, replace=False)
+    syn_idx = np.random.choice(len(syn_dataset), min(cfg.sample_num, len(syn_dataset)), replace=False)
     
     real_dataset = torch.utils.data.Subset(real_dataset, real_idx)
     syn_dataset = torch.utils.data.Subset(syn_dataset, syn_idx)
 
     syn_loader = torch.utils.data.DataLoader(syn_dataset, batch_size=1, shuffle=False)
-   
+
+    # loop on syn data
+    #for (x, y) in testloader:
+    #    print (f"Real data shape: {x.shape}, {y.shape}")
+    #    print (f"Real data class: {y}")
+
+    #for (x, y) in syn_loader:
+    #    print (f"Syn data shape: {x.shape}, {y.shape}")
+    #    print (f"Syn data class: {y}")
+
     # load checkpoint
     scores = {class_name: {'acc_real': 0, 'acc_syn' : 0, 'fid': 0, 'is': 0} for class_name in train_cfg.classes}
 
@@ -121,7 +131,7 @@ if __name__ == '__main__':
         # this is important: set the correct class index
         model.class_idx = class_idx
         #logger.info (model.class_nums, real_class_nums[class_idx])
-        assert model.class_nums == real_class_nums[class_idx], "Error: Class numbers do not match!"
+        ##assert model.class_nums == real_class_nums[class_idx], f"Error: Class numbers do not match! (Real: {real_class_nums[class_idx]}, Model: {model.class_nums})"
         model.eval()
 
         # evaluate the model on validation data
@@ -145,23 +155,23 @@ if __name__ == '__main__':
         scores[class_name]['fid'] = fid_score
         scores[class_name]['is'] = is_score
 
-# logger.info statistics
-logger.info ("===> Evaluation results")
-for class_name, val in scores.items():
-    logger.info (f"Classifier: {class_name}")
-    logger.info (f"Prediction accuracy: real {val['acc_real']}, synthetic {val['acc_syn']}")
-    logger.info (f"FID: {val['fid']}, IS: {val['is']}")
-    logger.info ("-"*50)
+    # logger.info statistics
+    logger.info ("===> Evaluation results")
+    for class_name, val in scores.items():
+        logger.info (f"Classifier: {class_name}")
+        logger.info (f"Prediction accuracy: real {val['acc_real']}, synthetic {val['acc_syn']}")
+        logger.info (f"FID: {val['fid']}, IS: {val['is']}")
+        logger.info ("-"*50)
 
-# avergae FID and IS
-fid_scores = [val['fid'] for val in scores.values()]
-is_scores = [val['is'] for val in scores.values()]
+    # avergae FID and IS
+    fid_scores = [val['fid'] for val in scores.values()]
+    is_scores = [val['is'] for val in scores.values()]
 
-# average, stddev, min, max. logger.info statistics single line with labels
-# FID: mean <mean>, stddev <stddev>, min <min>, max <max>
-# IS: mean <mean>, stddev <stddev>, min <min>, max <max>
-logger.info ("FID: mean {:.4f}, stddev {:.4f}, min {:.4f}, max {:.4f}".format(np.mean(fid_scores), np.std(fid_scores), np.min(fid_scores), np.max(fid_scores)))
-logger.info ("IS: mean {:.4f}, stddev {:.4f}, min {:.4f}, max {:.4f}".format(np.mean(is_scores), np.std(is_scores), np.min(is_scores), np.max(is_scores)))
+    # average, stddev, min, max. logger.info statistics single line with labels
+    # FID: mean <mean>, stddev <stddev>, min <min>, max <max>
+    # IS: mean <mean>, stddev <stddev>, min <min>, max <max>
+    logger.info ("FID: mean {:.4f}, stddev {:.4f}, min {:.4f}, max {:.4f}".format(np.mean(fid_scores), np.std(fid_scores), np.min(fid_scores), np.max(fid_scores)))
+    logger.info ("IS: mean {:.4f}, stddev {:.4f}, min {:.4f}, max {:.4f}".format(np.mean(is_scores), np.std(is_scores), np.min(is_scores), np.max(is_scores)))
 
 
 

@@ -11,6 +11,7 @@ import os
 from accelerate import Accelerator
 from ema_pytorch import EMA
 import logging
+import torch.distributed as distributed
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class VQVAE(nn.Module):
         
         #self.vq = VectorQuantizer(n_embeddings, cfg.latent_dim)
 
-        self.vq = VectorQuantize(codebook_size=n_embeddings, decay=0.8, sync_codebook=True, use_cosine_sim = True, dim=cfg.latent_dim)
+        self.vq = VectorQuantize(codebook_size=n_embeddings, decay=0.8, sync_codebook=distributed.is_initialized(), use_cosine_sim = True, dim=cfg.latent_dim)
         
         self.decoder = Decoder(latent_dim=cfg.latent_dim, input_size=input_size, **cfg.autoencoder)
 
@@ -132,7 +133,7 @@ class VQGAN(nn.Module):
         if exists(accelerator):
             self.accelerator = accelerator
         else:
-            self.accelerator = Accelerator(split_batches=False)
+            self.accelerator = Accelerator(split_batches=True)
 
         if self.accelerator.is_main_process:
         
@@ -175,7 +176,7 @@ class VQGAN(nn.Module):
 
         # start training
         for i in range(start_epoch, train_cfg.epoch):
-            train_metrics = self.train_step(train_loader, i, device, warmup_epochs=train_cfg.warmup_epoch)    
+            train_metrics = self.train_step(train_loader, i, warmup_epochs=train_cfg.warmup_epoch)    
             self.agg_metrics.append(train_metrics.get_avg("train_"))
             logger.info (f"Epoch: {i+1} / {train_cfg.epoch}; Training metrics: {train_metrics.get_avg()}")
 
@@ -212,7 +213,7 @@ class VQGAN(nn.Module):
             
             self.accelerator.wait_for_everyone()        
         
-    def train_step(self, train_loader, curr_epoch, device, warmup_epochs=1):
+    def train_step(self, train_loader, curr_epoch, warmup_epochs=1):
         self.ae.train()
         accelerator = self.accelerator
         self.device = accelerator.device
@@ -236,7 +237,7 @@ class VQGAN(nn.Module):
             # to zero for the first iterations (suggestion: at least one epoch). Longer warm-ups
             # generally lead to better reconstructions.
             # update (only) teacher parameters
-             
+           
             with accelerator.autocast():
                 if not train_disc:
                     x_hat, z_e, z_q = self.forward(x)
@@ -300,7 +301,7 @@ class VQGAN(nn.Module):
         return metrics, reconstructed_samples, orig_samples
 
     def save(self,  save_path, epoch):
-        if not self.accelerator.is_local_main_process:
+        if not self.accelerator.is_main_process:
             return
          
         state_dict = {'epoch' : epoch,

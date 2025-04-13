@@ -33,7 +33,7 @@ class UNet1D(nn.Module):
         prev_channel = inner_channel
         logger.info ("=====> Building U-net model with inner channel: %s", inner_channel)
         logger.info (f"init conv: in_channel: {in_channel} out_channel: {prev_channel}")
-        self.init_conv = nn.Conv1d(in_channel, prev_channel, kernel_size=5, padding='same', padding_mode='reflect')
+        self.init_conv = nn.Conv1d(in_channel, prev_channel, kernel_size=3, padding='same', padding_mode='reflect')
        
         self.downs = nn.ModuleList([])
         # Downsampling stage of U-net
@@ -98,7 +98,7 @@ class UNet1D(nn.Module):
         logger.info (f"Final conv layer: in_channel: {inner_channel}, out_channel: {out_channel}")
         self.final_conv = nn.Conv1d(inner_channel, out_channel, 1)
 
-    def forward(self, x, time):
+    def forward(self, x, time, **kwargs):
         # Embedding of time
         t = self.time_emb(time)
         

@@ -88,6 +88,10 @@ class Aggregator:
         for k, v in dict.items():
             self.dict[k].append(v)
 
+    # __getitem__ is used to access the dict
+    def __getitem__(self, key):
+        return self.dict[key]
+
     def get_avg(self, prefix=""):   
         avg_dict = {}
         for k, v in self.dict.items():

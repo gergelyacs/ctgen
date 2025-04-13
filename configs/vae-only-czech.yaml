@@ -1,0 +1,36 @@
+training_data: training_data/czech_proc.h5
+out_dir: results/vae-czech/
+device: cuda
+in_channels: 2
+input_size: 2048
+freq: 1 #Hz
+validation_size: 100
+scale_factors:
+  fhr_max: 240.0 
+  fhr_min: 60.0  
+  uc_max: 100.0
+  uc_min: 0.0
+first_stage_model:
+  model_path: first_stage.pt
+  type: vae
+  latent_dim: 2
+  cutoff: 0.05
+  kl_weight: 0.0001
+  autoencoder:
+    in_channels: 2
+    channels:
+    - 2
+    - 4
+    - 8
+  training:
+    max_grad_norm: 1.0
+    batch_size: 16
+    save_interval: 5
+    epoch: 11
+    out_dir: first_stage_training/
+    lr: 0.0001
+    warmup_epoch: 1
+    loss:
+      rec_loss_type: focal
+      disc_weight: 0
+

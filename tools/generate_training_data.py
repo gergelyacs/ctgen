@@ -45,9 +45,9 @@ czech = omegaconf.OmegaConf.create({
     "training_folder": "training_data/",
     "input_folder": ["training_data/raw_czech/"],
     # h5 file name for unprocessed data
-    "unproc_h5": "training_data/czech_unproc.h5",
+    "unproc_h5": "training_data/czech_unproc_2.h5",
     # h5 file name for processed data
-    "proc_h5": "training_data/czech_proc.h5"
+    "proc_h5": "training_data/czech_proc_2.h5"
 })
 
 cf = czech

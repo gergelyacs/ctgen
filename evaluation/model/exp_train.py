@@ -9,6 +9,7 @@ import pytorch_lightning as pl
 #import numpy as np
 #from utils import get_class_index
 import einops
+from collections import Counter
 
 from evaluation.model.fcn import FCNBaseline
 import logging
@@ -47,6 +48,9 @@ class ExpFCN(pl.LightningModule):
         x = einops.reduce(x, 'b c (l s) -> b c l', 'mean', s=self.downsampling_rate)
 
         y = y[:, self.class_idx]
+        
+        #cnt = Counter(y.flatten().cpu().detach().numpy())
+        #print (f"Class {self.class_idx}: {cnt}")
 
         #y = get_class_index(y, self.class_nums)
      
@@ -105,6 +109,8 @@ class ExpFCN(pl.LightningModule):
 
         y = y[:, self.class_idx]
 
+        # check distribution of the classes
+        
         #y = get_class_index(y, self.class_nums)
      
         yhat = self.fcn(x)  # (b n_classes)

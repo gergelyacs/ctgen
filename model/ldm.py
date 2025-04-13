@@ -41,6 +41,7 @@ class LDM():
         # in_channel must be latent_dim
 
         if exists(class_nums):
+            logger.info ("Conditional generation!")
             model = UNet1D_cond(in_channel=in_channel, 
                         out_channel=in_channel,
                         class_nums=class_nums,
@@ -49,6 +50,7 @@ class LDM():
                         channel_mults=channel_mults, 
                         cond_drop_prob=cond_drop_prob)
         else:
+            logger.info ("Unconditional generation!")
             model = UNet1D(in_channel=in_channel, 
                         out_channel=in_channel,
                         inner_channel=inner_channel,
@@ -67,7 +69,13 @@ class LDM():
         params = count_params(self.diffusion)
         logger.info(f"Number of LDM parameters: {params:,}")
         self.agg_metrics = []
-
+ 
+        self.optimizer = torch.optim.AdamW(self.diffusion.parameters(), lr=kwargs['lr'].init)
+        self.lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', 
+                                                                       factor=kwargs['lr'].factor, 
+                                                                       patience=kwargs['lr'].patience, 
+                                                                       min_lr=kwargs['lr'].min)
+     
         self.max_grad_norm = max_grad_norm
         if exists(accelerator):
             self.accelerator = accelerator
@@ -115,18 +123,18 @@ class LDM():
     def train_loop(self, train_cfg, train_loader, start_epoch = 0, val_loader=None, save_path=None, val_hook=None):   
         """ Initialize optimizer for training. """
         
-        self.optimizer = torch.optim.AdamW(self.diffusion.parameters(), lr=train_cfg.lr)
-
         self.diffusion, self.optimizer, train_loader = self.accelerator.prepare(self.diffusion, self.optimizer, train_loader)
        
         logger.info ("Training on device: %s", self.accelerator.device)
-
+ 
         # start training
         for i in range(start_epoch, train_cfg.epoch):
+            logger.info (f"Learning rate: {self.lr_scheduler.get_last_lr()[0]:.6f}")
             train_metrics = self.train_step(train_loader, i)    
             self.agg_metrics.append(train_metrics.get_avg())
             logger.info (f"Epoch: {i+1} / {train_cfg.epoch}; Training metrics: {train_metrics.get_avg()}")
-
+            # print get_last_lr
+        
             self.accelerator.wait_for_everyone()
             if self.accelerator.is_main_process:
                
@@ -146,9 +154,10 @@ class LDM():
                         self.save(sp, i + 1)
                         logger.info ("Model saved at: %s", sp)
            
+            # FIXME: validation loss
+            self.lr_scheduler.step(train_metrics['train_loss'][-1])
             self.accelerator.wait_for_everyone()
        
-   
     def train_step(self, train_loader, curr_epoch):
         self.diffusion.train()
         accelerator = self.accelerator
@@ -201,13 +210,15 @@ class LDM():
         return metrics
 
     def save(self,save_path, epoch):
-        if not self.accelerator.is_local_main_process:
+        if not self.accelerator.is_main_process:
             return
 
         state_dict = {'scale_factor' : self.scale_factor,
                       'epoch' : epoch,
                       'metrics': self.agg_metrics,
-                      'ema': self.ema.state_dict(),
+                      'ema': self.accelerator.get_state_dict(self.ema),
+                      'lr': self.lr_scheduler.state_dict(),
+                      'optimizer' : self.accelerator.get_state_dict(self.optimizer),
                       'model_state_dict' : self.accelerator.get_state_dict(self.diffusion)}
         
         for key, param in state_dict.items():
@@ -226,9 +237,13 @@ class LDM():
       
         if self.accelerator.is_main_process:
             self.ema = EMA(self.diffusion, beta = self.ema_decay, update_every = self.ema_update_every)
-            self.ema.load_state_dict(data['ema'])
+            self.ema.load_state_dict(data['ema'])          
   
         self.agg_metrics = data['metrics']
+        self.optimizer = self.accelerator.unwrap_model(self.optimizer)
+        self.optimizer.load_state_dict(data['optimizer'])
+        self.lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer)
+        self.lr_scheduler.load_state_dict(data['lr'])
         self.diffusion.eval()
         logger.info(f"LDM model loaded successfully from epoch {data['epoch']}.")
         return data['epoch']

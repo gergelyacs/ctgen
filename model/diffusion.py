@@ -165,7 +165,7 @@ class Diffusion(nn.Module):
         if exists(classes):
             self.apply_model = partial(self.model.forward_with_cond_scale, classes=classes, cond_scale=cond_scale)
         else:
-            self.apply_model = self.model
+            self.apply_model = self.model.forward
 
         pbar = kwargs['pbar'] if 'pbar' in kwargs else True
 

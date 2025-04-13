@@ -36,11 +36,8 @@ parser.add_argument('--steps', default=1000,
 parser.add_argument('--out_h5', default='generated_samples.h5',
                     metavar='PATH', help='HDF5 output file (default: generated_samples.h5)')
 
-parser.add_argument('--cond_scale', default='1', type=float,  
-                    help='conditional scale (default: 1.0)')
-
-parser.add_argument('--plot_samples', default='no',   
-                    help='conditional scale (default: no)')
+parser.add_argument('--guidance_scale', default='1', type=float,  
+                    help='guidance scale for conditional generation (default: 1.0)')
 
 parser.add_argument('--sampler', default='ddpm',   
                     help='sampler (default: ddpm). Supported samplers: ' + ', '.join(SAMPLERS))
@@ -73,7 +70,9 @@ def main():
     # Load config file
     cfg = OmegaConf.load(args.config)
 
-    if hasattr(cfg, 'class_file') and hasattr(cfg, 'classes'):
+    generate_labels = hasattr(cfg, 'class_file') and hasattr(cfg, 'classes') and not hasattr(cfg.ldm, 'unconstrained')
+
+    if generate_labels:
         logger.info ("Class file: %s", cfg.class_file)
         logger.info ("Classes: %s", cfg.classes)
 
@@ -132,6 +131,7 @@ def main():
         logger.info ("*** No class file provided!!!")
         class_nums = None
         sampled_classes = None
+        args.num = int(args.samples)
 
     batch_size = min(20, args.num)
     logger.info ("Batch size: %d", batch_size)
@@ -190,25 +190,25 @@ def main():
         logger.info (f"--- Generated samples: {total} ---")
         
         sample_num = batch_size if total + batch_size <= args.num else args.num - total
-
-        sampled_classes_idxs = sampled_classes[total:total + sample_num] if exists(sampled_classes) else None
-
+        sampled_classes_idxs = sampled_classes[total:total + sample_num] if generate_labels else None
+     
         logger.info (f"Latent Diffusion generation ({sample_num} samples)...")
         # generated ts has shape (batch_size, channels, time) and scaled to [-1, 1]
-        if exists(sampled_classes_idxs):
-            ts, classes = ldm.synthetise(cond_scale=args.cond_scale, sample_num=sample_num, classes=sampled_classes_idxs, steps=args.steps, sampler=args.sampler)   
+        if generate_labels:
+            ts, classes = ldm.synthetise(cond_scale=args.guidance_scale, sample_num=sample_num, classes=sampled_classes_idxs, steps=args.steps, sampler=args.sampler)   
+            all_classes.extend(classes.cpu().detach().numpy())     
+        # unconditional generation 
         else:
-            ts, classes = ldm.synthetise(sample_num=sample_num, steps=args.steps)
+            ts, classes = ldm.synthetise(sample_num=sample_num, steps=args.steps, sampler=args.sampler)
 
         # append the generated samples to the HDF5 file
         # transpose the samples to have time as the first dimension
         
         out_labels.append(np.arange(total, total + sample_num))   
-        all_classes.extend(classes.cpu().detach().numpy())      
       
-        if hasattr(cfg, 'sr_model'):
+        if hasattr(cfg, 'sr_model'):    
             logger.info("Upsampling the generated samples...")
-            ts = sr_model.super_resolution(ts.to(cfg.device), cond_scale=args.cond_scale, classes=sampled_classes_idxs, sampler=args.sampler, steps=args.steps)   
+            ts = sr_model.super_resolution(ts.to(cfg.device), cond_scale=args.guidance_scale, classes=sampled_classes_idxs, sampler=args.sampler, steps=args.steps)   
 
         # store generated sample in training data format for evaluation:
         # scaled into (-1, 1) with shape (batch_size, time, channels)
@@ -218,8 +218,8 @@ def main():
 
         # save signals doesn't scale the data, and expects the shape (batch_size, channels, time)
         if args.plot:
-            save_signals(ts, f'{args.out_dir}/samples_batch_{b}.jpg', classes=classes, cols=4)  
-       
+            save_signals(ts, f'{args.out_dir}/samples_batch_{int(total / batch_size + 1)}.jpg', classes=classes, cols=4)  
+    
         # Save the samples to csv files
         if args.csv:
             ts_len = ts.shape[2]
@@ -246,12 +246,13 @@ def main():
         total += ts.shape[0]
 
     # output classes to csv file, index is the sample number
-    df = pd.DataFrame(all_classes, columns=cfg.classes)
-    # add sample number as first column
-    df.insert(0, 'ID', range(args.num))
-    df.set_index('ID', inplace=True)
-    df.to_csv(f"{args.out_dir}/generated_labels.csv")
-    
+    if generate_labels:
+        df = pd.DataFrame(all_classes, columns=cfg.classes)
+        # add sample number as first column
+        df.insert(0, 'ID', range(args.num))
+        df.set_index('ID', inplace=True)
+        df.to_csv(f"{args.out_dir}/generated_labels.csv")
+        
     hdf5_file.close()
 
 

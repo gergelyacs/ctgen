@@ -1,5 +1,5 @@
 training_data: training_data/czech_proc.h5
-out_dir: results/sampling-czech-test/
+out_dir: results/sampling-czech/
 device: cuda
 in_channels: 2
 input_size: 2048
@@ -7,8 +7,9 @@ freq: 1 #Hz
 validation_size: 10
 class_file: training_data/czech_labels.csv
 classes:
-- "Sex"
-- "Deliv. type"
+- "Diabetes"
+- "Preeclampsia"
+- 'Deliv. type'
 scale_factors:
   fhr_max: 240.0
   fhr_min: 60.0
@@ -35,7 +36,11 @@ ldm:
     - 8
     epoch: 20
     out_dir: ldm-training/
-    lr: 0.0003
+    lr: 
+      init: 0.0005
+      factor: 0.5
+      patience: 5
+      min: 0.00001
     schedule_opt:
       schedule: cosine
       n_timestep: 1000
@@ -80,7 +85,12 @@ sr_model:
     batch_size: 16
     epoch: 20
     out_dir: sr3
-    lr: 1.0e-05
+    #lr: 1.0e-05
+    lr: 
+      init: 0.0005
+      factor: 0.5
+      patience: 5
+      min: 0.00001
     schedule_opt:
       schedule: cosine
       n_timestep: 1000

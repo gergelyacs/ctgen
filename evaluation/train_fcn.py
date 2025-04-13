@@ -14,6 +14,7 @@ from multiprocessing import cpu_count
 from evaluation.model.exp_train import ExpFCN
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from sklearn.model_selection import train_test_split
+from torch.utils.data import WeightedRandomSampler
 
 from dataloader.loader import PyTablesDataset
 import logging
@@ -40,8 +41,16 @@ if __name__ == '__main__':
     cfg.in_channels = train_cfg.in_channels 
       
     # load training data: (sample_num, time, channels)
-    dataset = PyTablesDataset(train_cfg.training_data, transpose=True, class_file=train_cfg.class_file, classes=train_cfg.classes)
-   
+    if cfg.syn_train:
+        training_data = os.path.join(cfg.syn_dir, cfg.syn_data_file)
+        class_file = os.path.join(cfg.syn_dir, cfg.syn_class_file)
+    else:
+        training_data = train_cfg.training_data
+        class_file = train_cfg.class_file
+
+    logger.info (f"Training data: {training_data}")
+    dataset = PyTablesDataset(training_data, transpose=True, class_file=class_file, classes=cfg.classes)
+    
     # classifiers are trained for each class on the training data
     # Evaluation is done on the validation data
     train_idx, val_idx = train_test_split(np.arange(len(dataset)), test_size=cfg.validation_size, random_state=cfg.random_seed)
@@ -49,31 +58,39 @@ if __name__ == '__main__':
     #train_idx = train_idx[:1000]
     #val_idx = val_idx[:500]
 
-    train_dataset = torch.utils.data.Subset(dataset, train_idx)
-    val_dataset = torch.utils.data.Subset(dataset, val_idx)
-
-    logger.info (f"Training samples: {len(train_dataset):,}; Validation samples: {len(val_dataset):,}")
-    # label distirbution
-    
     batch_size = cfg.batch_size
 
     # only 10 samples for testing 
-    trainloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=cpu_count() - 1, shuffle=True)
-    testloader = DataLoader(val_dataset, num_workers=cpu_count() - 1, batch_size=batch_size)
+    #trainloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=cpu_count() - 1, sampler=sampler)
+    #testloader = DataLoader(val_dataset, num_workers=cpu_count() - 1, batch_size=batch_size, sampler=sampler)
 
-    logger.info (f"Iterations per epoch (batch_size={cfg.epochs}): %s", len(trainloader))
+    logger.info (f"Iterations per epoch (batch_size={cfg.epochs})")
+    logger.info (f"Balanced sampling: {cfg.balanced}")
     
     # train a classifier for each class defined in the training data
     for class_idx, class_name in enumerate(dataset.classes):
+
         logger.info (f"Class: {class_name}; Idx: {class_idx}")
         
         model_name = cfg.classifier_name + f'-{class_name}'
+
+        weights = dataset.get_weights(class_idx=class_idx, balanced=cfg.balanced, sample_idx=train_idx)
+        sampler_train = WeightedRandomSampler(weights, len(train_idx))
+        weights = dataset.get_weights(class_idx=class_idx, balanced=cfg.balanced, sample_idx=val_idx)
+        sampler_test = WeightedRandomSampler(weights, len(val_idx))
+
+        train_dataset = torch.utils.data.Subset(dataset, train_idx)
+        val_dataset = torch.utils.data.Subset(dataset, val_idx)
+        logger.info (f"Training samples: {len(train_dataset):,}; Validation samples: {len(val_dataset):,}") 
+
+        trainloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=cpu_count() - 1, sampler=sampler_train)
+        valloader = DataLoader(val_dataset, num_workers=cpu_count() - 1, batch_size=batch_size, sampler=sampler_test)
 
         # 1 Hz data should be enough for classification
         # SOTE: we have 4 Hz sampling rate -> downsampling_rate=4 to have 1 Hz
         # Czech: 1Hz -> downsampling_rate=1 
         train_exp = ExpFCN(cfg, 
-                           len(train_dataset), 
+                           len(train_idx), 
                            dataset.class_nums[class_idx], 
                            class_idx, 
                            downsampling_rate=train_cfg.freq, 
@@ -81,7 +98,7 @@ if __name__ == '__main__':
     
         wandb_config = { 'batch_size': batch_size, 'epochs': cfg.epochs, 'learning_rate': cfg.lr, 'validation_size': cfg.validation_size }
 
-        logger_wandb = WandbLogger(project='CTG-FCN-eval', name=model_name, config=wandb_config)
+        logger_wandb = WandbLogger(project=cfg.wandb_project, name=model_name, config=wandb_config)
 
         # save best model 
         checkpoint_callback = ModelCheckpoint(
@@ -110,12 +127,12 @@ if __name__ == '__main__':
             
         trainer.fit(train_exp,
                     train_dataloaders=trainloader,
-                    val_dataloaders=testloader,
+                    val_dataloaders=valloader,
                     **_train_args
                     )
         
         # test
-        trainer.test(train_exp, testloader)
+        trainer.test(train_exp, valloader)
         logger_wandb.experiment.finish()
 
     

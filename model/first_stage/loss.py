@@ -417,6 +417,8 @@ class VAELossFn(nn.Module):
         if self.discriminator is None:
             logger.warning ("WARNING: Discriminator is not used!")
 
+        logger.info ("==> VAE Loss function with rec_loss_type: %s", rec_loss_type)
+
     def calculate_adaptive_weight(self, nll_loss, generator_loss):
 
         rec_grads = torch.autograd.grad(nll_loss, self.last_layer.weight,
@@ -440,7 +442,9 @@ class VAELossFn(nn.Module):
         # loss for generator / autoencoder
         rec_loss = self.rec_loss_fn(x_hat, x)
         nll_loss = rec_loss / torch.exp(self.logvar) + self.logvar
-        nll_loss = torch.sum(nll_loss) / nll_loss.shape[0]
+        #print ("NLL loss:", nll_loss)
+
+        #nll_loss = torch.sum(nll_loss) / nll_loss.shape[0]
         #print ("NLL loss:", nll_loss)
         loss += nll_loss
         log['nll_loss'] = nll_loss.item()

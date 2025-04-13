@@ -15,7 +15,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class PyTablesDataset(Dataset):
-    def __init__(self, path, transpose=True, class_file=None, classes=None):   
+    def __init__(self, path, transpose=True, class_file=None, classes=None, balance_classes=False):   
         self.h5file = tables.open_file(path, mode='r')
         self.data = self.h5file.root.samples.windows
         self.user_id = self.h5file.root.samples.labels
@@ -28,26 +28,43 @@ class PyTablesDataset(Dataset):
         if exists(class_file):      
             self.labels, self.class_nums = load_classes(class_file, classes)
             # get the allowed ids: only those with labels
-            self.allowed_ids = [i for i, uid in enumerate(self.user_id) if uid in self.labels]
+            self.allowed_ids = np.array([i for i, uid in enumerate(self.user_id) if uid in self.labels])
 
-            cnt = Counter(self.labels.values())
+            self.cnt = Counter(self.labels.values())
             logger.info ("* Number of patients in classes file: %s", len(self.labels))
             logger.info ("* Number of patients with CTG: %s", np.unique(self.user_id).shape[0])
             logger.info ("* Number of patients with labelled CTG: %s", np.intersect1d(self.user_id, list(self.labels.keys())).shape[0])
             logger.info ("* Number of labelled records (windows): %s", len(self.allowed_ids))    
-            logger.info ("* Number of occuring classes: %s", len(cnt))
+            logger.info ("* Number of occuring classes: %s", len(self.cnt))
             #logger.info ("* Class distribution:", cnt)
             logger.info ("* Number of subclasses: %s", len(self.class_nums))
             logger.info ("* Values per subclass: %s", self.class_nums)
         else:
             # if no classes are provided then use all data
-            self.allowed_ids = range(len(self.data))
+            self.allowed_ids = np.arange(len(self.data))
             self.class_nums = None
             self.labels = None
-           
+
     def __len__(self):
         return len(self.allowed_ids)
     
+    # get the weight per sample
+    # weight = 1 / number of occurences of the sample's class
+    # this is used for the sampler to balance the classes
+    def get_weights(self, balanced=False, class_idx=None, sample_idx=None):
+        # only for the samples in sample_idx
+        allowed_ids = self.allowed_ids[sample_idx] if exists(sample_idx) else self.allowed_ids
+        if not balanced:
+            # each sample has the same weight
+            return np.array([1. / len(allowed_ids)] * len(allowed_ids))
+        else:
+            labels = [self.labels[self.user_id[idx]][class_idx] for idx in allowed_ids] if exists(class_idx) else self.labels
+            cnt = Counter(labels)
+            #print (f"Class {class_idx}: {cnt}")
+
+            # weight is 1 / number of occurences of the sample's class
+            return np.array([1. / cnt[x] for x in labels])
+   
     def __getitem__(self, idx):
         idx = self.allowed_ids[idx]
         record = self.data[idx].T.astype(np.float32) if self.transpose else self.data[idx].astype(np.float32)
